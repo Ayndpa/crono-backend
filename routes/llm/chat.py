@@ -22,8 +22,8 @@ async def generate_stream(client: OpenAIStreamClient, request: ChatRequest) -> A
   """
   try:
     async for chunk in client.stream_chat_completion(
-      request.model,
-      request.messages
+      request.messages,
+      request.model
     ):
       # 将 chunk 编码为 bytes
       chunk_bytes = chunk.encode("utf-8")

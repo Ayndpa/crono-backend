@@ -113,7 +113,7 @@ async def ai_summary_stream(payload: AISummaryRequest, request: Request, db=Depe
             raise HTTPException(status_code=503, detail="Browser not available")
         article_content = await pw_service.scrape_article(browser, payload.url)
         messages = [
-            {"role": "system", "content": "你是一个专业的文章摘要助手。请用中文简明扼要地总结以下文章，提取核心观点和关键信息。尽可能总结成一段话，使用markdown格式（加粗、斜体等）标注重要内容。"},
+            {"role": "system", "content": "你是一个专业的文章摘要专家。请对文章进行深度提炼，用中文输出一段紧凑的摘要。要求：1. 直接输出摘要内容，严禁包含任何开场白、分析过程或引导性文字（如“用户想让我...”、“让我分析...”等）；2. 摘要必须极其精炼，篇幅严格控制在一段话内；3. 准确捕捉核心观点与关键事实；4. 适当使用 Markdown 加粗关键词以提升视觉阅读效率。"},
             {"role": "user", "content": article_content}
         ]
         # 启动 producer，它会把生成的 chunk 放到 session["buffer"] 并广播

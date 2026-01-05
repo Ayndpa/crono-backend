@@ -18,7 +18,8 @@ def create_llm_config_service(db: sqlite3.Connection, config: LLMConfig) -> LLMC
         )
         db.commit()
         config_id = cursor.lastrowid
-        return LLMConfig(id=config_id, **config.dict())
+        config.id = config_id
+        return config
     except sqlite3.Error as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"创建配置失败: {e}")
 
