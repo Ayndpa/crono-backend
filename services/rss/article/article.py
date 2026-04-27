@@ -82,9 +82,10 @@ def delete_all_articles_and_related_data(db: Connection) -> dict:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"删除文章失败: {e}")
 
-def get_articles(db: Connection, feed_id: int = None, limit: int = 50) -> list[ArticleResponse]:
+def get_articles(db: Connection, user_id: int, feed_id: int = None, limit: int = 50) -> list[ArticleResponse]:
     """
     获取文章及其状态，按发布时间最新排序。
+    通过 rss_feeds.user_id 过滤当前用户的文章。
     如果提供 feed_id，则仅返回该 feed_id 的文章；否则返回最新的文章。
     """
     try:
@@ -94,21 +95,23 @@ def get_articles(db: Connection, feed_id: int = None, limit: int = 50) -> list[A
             a.id, a.feed_id, a.title, a.link, a.guid, a.pub_date, a.author,
             s.is_read, s.tags, s.ai_summary, s.updated_at
         FROM articles a
+        JOIN rss_feeds f ON a.feed_id = f.id
         LEFT JOIN article_states s ON a.id = s.article_id
+        WHERE f.user_id = ?
         """
         if feed_id is not None:
             sql += """
-            WHERE a.feed_id = ?
+            AND a.feed_id = ?
             ORDER BY a.pub_date DESC
             LIMIT ?
             """
-            cursor.execute(sql, (feed_id, limit))
+            cursor.execute(sql, (user_id, feed_id, limit))
         else:
             sql += """
             ORDER BY a.pub_date DESC
             LIMIT ?
             """
-            cursor.execute(sql, (limit,))
+            cursor.execute(sql, (user_id, limit))
         
         rows = cursor.fetchall()
 

@@ -8,6 +8,7 @@ from models.llm.request import ChatRequest
 from services.llm.chat import OpenAIStreamClient
 from services.llm.config import get_llm_config_service
 from services.database import get_db
+from services.auth import get_current_user
 
 # FastAPI 路由设置
 router = APIRouter(
@@ -46,14 +47,13 @@ async def generate_stream(client: OpenAIStreamClient, request: ChatRequest) -> A
 @router.post("/stream_chat", response_model=None)
 async def stream_chat(
   request: ChatRequest,
+  current_user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
   """
   接受一个聊天请求，并以流式方式返回 AI 响应。
-  客户端可以通过 SSE (Server-Sent Events) 方式接收文本块。
-  响应数据使用 Base64 编码，客户端需要进行相应的解码。
   """
   try:
-    client = OpenAIStreamClient()
+    client = OpenAIStreamClient(current_user["id"])
   except RuntimeError as e:
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

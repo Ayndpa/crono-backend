@@ -1,11 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from routes.llm import ai_summary, chat, config as llm_config
+from routes.llm import ai_summary, chat, config as llm_config, entities as llm_entities
 from routes.rss import feed, updater
 from routes import config
+from routes import auth
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes.rss.article import article, state
+from routes.rss.article import article, state, content as article_content
 from services.rss.updater import RSSUpdater
 import threading
 import services.playwright as pw_service
@@ -58,15 +60,20 @@ def create_app() -> FastAPI:
     app.include_router(llm_config.router)
     app.include_router(chat.router)
     app.include_router(ai_summary.router)
+    app.include_router(llm_entities.router)
 
     # rss    
     app.include_router(feed.router)
     app.include_router(state.router)
     app.include_router(article.router)
+    app.include_router(article_content.router)
     app.include_router(updater.router)
 
     # config
     app.include_router(config.router)
+
+    # auth
+    app.include_router(auth.router)
 
     return app
 

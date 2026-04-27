@@ -1,4 +1,5 @@
 import time
+import os
 from datetime import datetime, timezone
 import schedule
 
@@ -9,13 +10,12 @@ from services.rss.article.metadata import article_exists
 from services.rss.request import get_rss_feed
 from services.rss.feed import get_all_feeds
 from models.rss.article import Article
-from services.config import get_config
 
 class RSSUpdater:
     def __init__(self):
-        self.interval = 30  # 默认间隔时间（分钟）
+        self.interval = int(os.environ.get('RSS_READ_INTERVAL', '30'))  # 间隔时间（分钟），默认30
         self.running = True  # 控制任务运行状态
-        self.auto_refresh = True  # 默认启用自动刷新
+        self.auto_refresh = os.environ.get('RSS_AUTO_REFRESH', 'true').lower() == 'true'
 
     def safely_close_generator(self, generator):
         """
@@ -125,19 +125,6 @@ class RSSUpdater:
         """
         # 首次运行时，立即执行一次
         self.check_and_update_feeds()
-        
-        # 从数据库中读取配置，获取 RSS 更新间隔时间和自动刷新设置
-        db_generator = get_db()
-        try:
-            conn = next(db_generator)
-            config_interval = get_config(conn, 'rss_read_interval')
-            config_auto_refresh = get_config(conn, 'rss_auto_refresh')
-            self.interval = int(config_interval.value) if config_interval and config_interval.value.isdigit() else 30
-            self.auto_refresh = config_auto_refresh.value.lower() == 'true' if config_auto_refresh and config_auto_refresh.value else True
-        except Exception as e:
-            print(f"警告: 无法从配置中读取 'rss_read_interval' 或 'rss_auto_refresh'，使用默认值。错误: {e}")
-        finally:
-            self.safely_close_generator(db_generator)
 
         if not self.auto_refresh:
             print("RSS更新程序已启动，但自动刷新功能已禁用。仅支持手动刷新。")

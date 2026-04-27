@@ -3,13 +3,21 @@ from typing import List
 from fastapi import HTTPException
 import sqlite3
 
-def get_all_tags(db: sqlite3.Connection) -> List[str]:
+def get_all_tags(db: sqlite3.Connection, user_id: int) -> List[str]:
     """
-    获取所有文章状态中的唯一标签。
+    获取当前用户所有文章状态中的唯一标签。
     """
     try:
         cursor = db.cursor()
-        cursor.execute("SELECT tags FROM article_states")
+        cursor.execute(
+            """
+            SELECT s.tags FROM article_states s
+            JOIN articles a ON s.article_id = a.id
+            JOIN rss_feeds f ON a.feed_id = f.id
+            WHERE f.user_id = ?
+            """,
+            (user_id,),
+        )
         rows = cursor.fetchall()
         tags = set()
         for row in rows:
@@ -18,10 +26,11 @@ def get_all_tags(db: sqlite3.Connection) -> List[str]:
         return list(tags)
     except sqlite3.Error as e:
         raise HTTPException(status_code=500, detail=f"数据库错误: {e}")
-    
-def get_today_update_count(db: sqlite3.Connection) -> int:
+
+
+def get_today_update_count(db: sqlite3.Connection, user_id: int) -> int:
     """
-    获取今日更新的文章状态数量。
+    获取当前用户今日更新的文章数量。
     """
     try:
         cursor = db.cursor()
@@ -29,10 +38,12 @@ def get_today_update_count(db: sqlite3.Connection) -> int:
         cursor.execute(
             """
             SELECT COUNT(*) as count
-            FROM article_states
-            WHERE DATE(updated_at) = ?
+            FROM article_states s
+            JOIN articles a ON s.article_id = a.id
+            JOIN rss_feeds f ON a.feed_id = f.id
+            WHERE f.user_id = ? AND DATE(s.updated_at) = ?
             """,
-            (today,),
+            (user_id, today),
         )
         row = cursor.fetchone()
         return row["count"] if row else 0

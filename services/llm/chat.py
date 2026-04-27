@@ -9,28 +9,29 @@ class OpenAIStreamClient:
     """
     封装OpenAI异步流式客户端。
     """
-    def __init__(self):
+    def __init__(self, user_id: int):
         """
         初始化AsyncOpenAI客户端。
-        从数据库中读取配置并初始化。
+        从数据库中读取当前用户的配置并初始化。
         """
         try:
-            with next(get_db()) as db:
-                config_entry = get_config(db, "llm_config_id")
-                llm_config_id = config_entry.value if config_entry else None
+            db_gen = get_db()
+            db = next(db_gen)
+            config_entry = get_config(db, user_id, "llm_config_id")
+            llm_config_id = config_entry.value if config_entry else None
 
-                if not llm_config_id:
-                    raise ValueError("LLM configuration ID not set. Please set LLM_CONFIG_ID environment variable.")
+            if not llm_config_id:
+                raise ValueError("未设置 LLM 配置，请在设置中选择一个模型配置。")
 
-                config = get_llm_config_service(db, int(llm_config_id))
-                if not config:
-                    raise ValueError(f"LLM configuration with ID {llm_config_id} not found in the database.")
+            config = get_llm_config_service(db, int(llm_config_id), user_id)
+            if not config:
+                raise ValueError(f"ID 为 {llm_config_id} 的 LLM 配置不存在。")
 
-                self.model = config.model  # 从配置中读取模型名称
-                self.client = AsyncOpenAI(
-                    base_url=str(config.base_url),
-                    api_key=config.api_key
-                )
+            self.model = config.model
+            self.client = AsyncOpenAI(
+                base_url=str(config.base_url),
+                api_key=config.api_key,
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
 
