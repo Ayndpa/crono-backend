@@ -60,7 +60,7 @@ def mark_article_as_read(db: sqlite3.Connection, article_id: int) -> None:
             """
             UPDATE article_states
             SET is_read = 1, updated_at = ?
-            WHERE id = ?
+            WHERE article_id = ?
             """,
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), article_id),
         )
@@ -82,9 +82,30 @@ def save_ai_summary(db: sqlite3.Connection, article_id: int, ai_summary: str) ->
             """
             UPDATE article_states
             SET ai_summary = ?, updated_at = ?
-            WHERE id = ?
+            WHERE article_id = ?
             """,
             (ai_summary, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), article_id),
+        )
+        db.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="文章未找到")
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=500, detail=f"数据库错误: {e}")
+
+
+def save_ai_translation(db: sqlite3.Connection, article_id: int, ai_translation: str) -> None:
+    """
+    保存 AI 全文翻译到指定文章状态。
+    """
+    try:
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            UPDATE article_states
+            SET ai_translation = ?, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (ai_translation, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), article_id),
         )
         db.commit()
         if cursor.rowcount == 0:
@@ -102,13 +123,36 @@ def get_ai_summary(db: sqlite3.Connection, article_id: int) -> str:
             """
             SELECT ai_summary
             FROM article_states
-            WHERE id = ?
+            WHERE article_id = ?
             """,
             (article_id,),
         )
         row = cursor.fetchone()
         if row and row["ai_summary"]:
             return row["ai_summary"]
+        else:
+            return None
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=500, detail=f"数据库错误: {e}")
+
+
+def get_ai_translation(db: sqlite3.Connection, article_id: int) -> str:
+    """
+    获取指定文章的 AI 全文翻译。
+    """
+    try:
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            SELECT ai_translation
+            FROM article_states
+            WHERE article_id = ?
+            """,
+            (article_id,),
+        )
+        row = cursor.fetchone()
+        if row and row["ai_translation"]:
+            return row["ai_translation"]
         else:
             return None
     except sqlite3.Error as e:

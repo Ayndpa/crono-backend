@@ -26,6 +26,7 @@ def initialize_database():
                 with open(file_path, "r", encoding="utf-8") as f:
                     sql_script = f.read()
                 conn.executescript(sql_script)
+        ensure_schema_migrations(conn)
         conn.commit()
         print("SQL 脚本执行完成。")
     except FileNotFoundError:
@@ -35,6 +36,15 @@ def initialize_database():
         raise HTTPException(status_code=500, detail="SQL 脚本执行失败")
     finally:
         conn.close()
+
+
+def ensure_schema_migrations(conn: sqlite3.Connection) -> None:
+    """补齐旧数据库缺失的轻量字段。"""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(article_states)")
+    columns = {row["name"] for row in cursor.fetchall()}
+    if "ai_translation" not in columns:
+        cursor.execute("ALTER TABLE article_states ADD COLUMN ai_translation TEXT")
 
 
 def get_global_connection() -> sqlite3.Connection:

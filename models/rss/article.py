@@ -22,6 +22,7 @@ class ArticleState(BaseModel):
     is_read: bool = Field(False, description="用户是否已读该文章")
     tags: Optional[list[str]] = Field(default_factory=list, description="对文章的分类或标签")
     ai_summary: Optional[str] = Field(None, description="AI生成的文章总结内容")
+    ai_translation: Optional[str] = Field(None, description="AI生成的全文翻译")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="状态最后更新时间")
 
 class ArticleResponse(BaseModel):
@@ -38,4 +39,5 @@ class ArticleResponse(BaseModel):
     is_read: bool = Field(False, description="用户是否已读该文章")
     tags: Optional[list[str]] = Field(default_factory=list, description="对文章的分类或标签")
     ai_summary: Optional[str] = Field(None, description="AI生成的文章总结内容")
+    ai_translation: Optional[str] = Field(None, description="AI生成的全文翻译")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="状态最后更新时间")

@@ -8,7 +8,12 @@ import hashlib
 
 from services.llm.chat import OpenAIStreamClient
 import services.playwright as pw_service
-from services.rss.article.state import save_ai_summary, get_ai_summary
+from services.rss.article.state import (
+    save_ai_summary,
+    get_ai_summary,
+    save_ai_translation,
+    get_ai_translation,
+)
 from services.database import get_db
 from services.auth import get_current_user
 
@@ -20,8 +25,16 @@ class AISummaryRequest(BaseModel):
     article_id: Optional[int] = None  # RSS 文章有 id；浏览器模式可不传
 
 
+class AISummaryCacheRequest(BaseModel):
+    article_id: Optional[int] = None
+
+
 class TranslationRequest(BaseModel):
     url: str
+    article_id: Optional[int] = None
+
+
+class TranslationCacheRequest(BaseModel):
     article_id: Optional[int] = None
 
 
@@ -53,6 +66,21 @@ def _session_key(article_id: Optional[int], url: str) -> Any:
     if article_id is not None:
         return article_id
     return hashlib.sha256(url.encode()).hexdigest()[:16]
+
+
+def _article_prompt_text(article: dict) -> str:
+    """从抓取结果中提取可发送给 LLM 的字符串正文。"""
+    if article.get("captcha"):
+        raise HTTPException(status_code=422, detail="无法抓取文章内容（验证码拦截）")
+
+    title = article.get("title") or ""
+    html = article.get("html") or ""
+    if not html.strip():
+        raise HTTPException(status_code=422, detail="无法抓取文章正文")
+
+    if title.strip():
+        return f"标题：{title}\n\n正文：\n{html}"
+    return html
 
 
 SUMMARY_SYSTEM_PROMPT = (
@@ -93,6 +121,7 @@ async def _make_stream_session(
     db,
     user_id: int,
     persist_article_id: Optional[int] = None,
+    persist_kind: str = "summary",
 ):
     """
     通用流式 producer 启动逻辑。
@@ -121,16 +150,21 @@ async def _make_stream_session(
 
                 if persist_article_id is not None:
                     full_text = "".join(session["buffer"])
-                    save_ai_summary(db, persist_article_id, full_text)
+                    if persist_kind == "translation":
+                        save_ai_translation(db, persist_article_id, full_text)
+                    else:
+                        save_ai_summary(db, persist_article_id, full_text)
 
-            except Exception:
+            except Exception as e:
+                error_text = f"\n生成失败：{e}"
+                session["buffer"].append(error_text)
                 for q in list(session["subscribers"]):
                     try:
+                        q.put_nowait(error_text)
                         q.put_nowait(None)
                     except Exception:
                         pass
                 session["producer_task"] = None
-                raise
             else:
                 for q in list(session["subscribers"]):
                     try:
@@ -186,7 +220,9 @@ async def ai_summary_stream(
         browser = getattr(request.app.state, "browser", None)
         if not browser:
             raise HTTPException(status_code=503, detail="Browser not available")
-        article_content = await pw_service.scrape_article(browser, payload.url)
+        article_content = _article_prompt_text(
+            await pw_service.scrape_article(browser, payload.url)
+        )
         messages = [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
             {"role": "user", "content": article_content},
@@ -201,6 +237,19 @@ async def ai_summary_stream(
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 
+@router.post("/ai_summary/cache")
+async def ai_summary_cache(
+    payload: AISummaryCacheRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """只检查已生成的文章摘要，不触发生成。"""
+    if payload.article_id is None:
+        return {"summary": None}
+
+    return {"summary": get_ai_summary(db, payload.article_id)}
+
+
 @router.post("/translation/stream")
 async def translation_stream(
     payload: TranslationRequest,
@@ -208,22 +257,31 @@ async def translation_stream(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """上下文感知翻译，结果不持久化到 DB。"""
+    """上下文感知翻译，结果持久化到 DB。"""
     key = _session_key(payload.article_id, payload.url)
+
+    if payload.article_id is not None:
+        existing = get_ai_translation(db, payload.article_id)
+        if existing:
+            return StreamingResponse(iter([existing]), media_type="text/plain")
+
     session = translation_sessions[key]
 
     if not session["producer_task"]:
         browser = getattr(request.app.state, "browser", None)
         if not browser:
             raise HTTPException(status_code=503, detail="Browser not available")
-        article_content = await pw_service.scrape_article(browser, payload.url)
+        article_content = _article_prompt_text(
+            await pw_service.scrape_article(browser, payload.url)
+        )
         messages = [
             {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
             {"role": "user", "content": article_content},
         ]
         await _make_stream_session(
             translation_sessions, key, messages, db, current_user["id"],
-            persist_article_id=None,
+            persist_article_id=payload.article_id,
+            persist_kind="translation",
         )
 
     q, event_generator = _make_event_generator(session)
@@ -231,10 +289,30 @@ async def translation_stream(
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 
+@router.post("/translation/cache")
+async def translation_cache(
+    payload: TranslationCacheRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """只检查已生成的全文翻译，不触发生成。"""
+    if payload.article_id is None:
+        return {"translation": None}
+
+    return {"translation": get_ai_translation(db, payload.article_id)}
+
+
 class ArticleQARequest(BaseModel):
     url: str
     article_id: Optional[int] = None
     question: str
+
+
+class SelectionAssistRequest(BaseModel):
+    action: str
+    text: str
+    article_title: Optional[str] = None
+    article_context: Optional[str] = None
 
 
 ARTICLE_QA_SYSTEM_PROMPT = (
@@ -245,6 +323,21 @@ ARTICLE_QA_SYSTEM_PROMPT = (
     "3. 回答简洁准确，适当使用 Markdown 格式提升可读性；\n"
     "4. 用中文回答，无论原文是何种语言。"
 )
+
+SELECTION_ASSIST_SYSTEM_PROMPTS = {
+    "explain": (
+        "你是一个深度阅读助手。请结合文章语境，用中文解释用户选中的文本。"
+        "回答要简洁、准确，控制在 150 字以内，不要添加前言。"
+    ),
+    "summary": (
+        "你是一个阅读总结助手。请用中文总结用户选中的文本。"
+        "抓住核心含义，控制在 120 字以内，不要添加前言。"
+    ),
+    "translate": (
+        "你是一个专业翻译助手。请将用户选中的文本翻译为自然流畅的中文。"
+        "如果文本已经是中文，请改写为更清晰的中文表达。不要添加前言。"
+    ),
+}
 
 # qa sessions 不缓存（每次问题不同）
 qa_sessions: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
@@ -270,7 +363,9 @@ async def article_qa_stream(
     browser = getattr(request.app.state, "browser", None)
     if not browser:
         raise HTTPException(status_code=503, detail="Browser not available")
-    article_content = await pw_service.scrape_article(browser, payload.url)
+    article_content = _article_prompt_text(
+        await pw_service.scrape_article(browser, payload.url)
+    )
     messages = [
         {"role": "system", "content": ARTICLE_QA_SYSTEM_PROMPT},
         {"role": "user", "content": f"以下是文章内容：\n\n{article_content}\n\n请回答：{payload.question}"},
@@ -285,9 +380,57 @@ async def article_qa_stream(
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 
+@router.post("/selection/stream")
+async def selection_assist_stream(
+    payload: SelectionAssistRequest,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """对用户划选文本进行解释、总结或翻译。"""
+    system_prompt = SELECTION_ASSIST_SYSTEM_PROMPTS.get(payload.action)
+    if not system_prompt:
+        raise HTTPException(status_code=400, detail="不支持的划词操作")
+
+    selected_text = payload.text.strip()
+    if not selected_text:
+        raise HTTPException(status_code=400, detail="划词内容不能为空")
+
+    user_message = (
+        f"文章标题：{payload.article_title or '未知'}\n\n"
+        f"文章上下文：\n{payload.article_context or selected_text}\n\n"
+        f"用户选中文本：\n{selected_text}"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+    client = OpenAIStreamClient(current_user["id"])
+
+    async def generate():
+        async for chunk in client.stream_chat_completion(messages):
+            yield chunk
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
+
 class PodcastRequest(BaseModel):
     url: str
     article_id: Optional[int] = None
+    style: Optional[str] = None
+
+
+def _podcast_system_prompt(style: Optional[str]) -> str:
+    style_text = (style or "").strip()
+    if not style_text:
+        return PODCAST_SYSTEM_PROMPT
+
+    return (
+        f"{PODCAST_SYSTEM_PROMPT}\n"
+        "用户自定义风格要求：\n"
+        f"{style_text}\n"
+        "在不违背上述内容准确性要求的前提下，优先遵循用户自定义风格。"
+    )
 
 
 @router.post("/podcast/stream")
@@ -298,16 +441,19 @@ async def podcast_stream(
     current_user: dict = Depends(get_current_user),
 ):
     """将文章改写为播客口语稿，流式返回纯文本。"""
-    key = "podcast_" + str(_session_key(payload.article_id, payload.url))
+    style_hash = hashlib.sha256((payload.style or "").strip().encode()).hexdigest()[:8]
+    key = "podcast_" + str(_session_key(payload.article_id, payload.url)) + "_" + style_hash
     session = podcast_sessions[key]
 
     if not session["producer_task"]:
         browser = getattr(request.app.state, "browser", None)
         if not browser:
             raise HTTPException(status_code=503, detail="Browser not available")
-        article_content = await pw_service.scrape_article(browser, payload.url)
+        article_content = _article_prompt_text(
+            await pw_service.scrape_article(browser, payload.url)
+        )
         messages = [
-            {"role": "system", "content": PODCAST_SYSTEM_PROMPT},
+            {"role": "system", "content": _podcast_system_prompt(payload.style)},
             {"role": "user", "content": article_content},
         ]
         await _make_stream_session(

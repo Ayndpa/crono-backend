@@ -37,13 +37,14 @@ def create_article(
         
         # 初始化并设置关联的 article_state
         sql_state = """
-        INSERT INTO article_states (article_id, is_read, tags, ai_summary, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO article_states (article_id, is_read, tags, ai_summary, ai_translation, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         """
         data_state = (
             article_id,
             False,
             "",
+            None,
             None,
             datetime.now(timezone.utc),
         )
@@ -93,7 +94,7 @@ def get_articles(db: Connection, user_id: int, feed_id: int = None, limit: int =
         sql = """
         SELECT 
             a.id, a.feed_id, a.title, a.link, a.guid, a.pub_date, a.author,
-            s.is_read, s.tags, s.ai_summary, s.updated_at
+            s.is_read, s.tags, s.ai_summary, s.ai_translation, s.updated_at
         FROM articles a
         JOIN rss_feeds f ON a.feed_id = f.id
         LEFT JOIN article_states s ON a.id = s.article_id
@@ -127,7 +128,8 @@ def get_articles(db: Connection, user_id: int, feed_id: int = None, limit: int =
                 is_read=row[7],
                 tags=row[8].split(",") if row[8] else [],
                 ai_summary=row[9],
-                updated_at=row[10],
+                ai_translation=row[10],
+                updated_at=row[11],
             )
             for row in rows
         ]

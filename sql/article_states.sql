@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS article_states (
     is_read BOOLEAN NOT NULL DEFAULT 0,
     tags TEXT,
     ai_summary TEXT,
+    ai_translation TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
