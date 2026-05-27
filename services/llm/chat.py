@@ -1,9 +1,16 @@
 import asyncio
+from typing import AsyncGenerator, Literal, TypedDict
+
 from openai import AsyncOpenAI
 
 from services.database import get_db
 from services.llm.config import get_llm_config_service
 from services.config import get_config
+
+
+class StreamChunk(TypedDict):
+    type: Literal['reasoning', 'content']
+    text: str
 
 class OpenAIStreamClient:
     """
@@ -35,7 +42,7 @@ class OpenAIStreamClient:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
 
-    async def stream_chat_completion(self, messages: list[dict], model: str = None):
+    async def stream_chat_completion(self, messages: list[dict], model: str = None) -> AsyncGenerator[StreamChunk, None]:
         """
         发起流式聊天补全请求并逐块返回响应内容。
         此方法将直接返回模型生成的文本内容。
@@ -76,12 +83,12 @@ class OpenAIStreamClient:
                     reasoning = getattr(delta, 'reasoning_content', None)
 
                 if reasoning:
-                    yield str(reasoning)
+                    yield {'type': 'reasoning', 'text': str(reasoning)}
                 
                 # 检查是否存在内容块
                 if delta.content:
                     # 直接返回内容字符串
-                    yield delta.content
+                    yield {'type': 'content', 'text': delta.content}
                 
         except Exception as e:
             # 打印错误信息，并重新抛出异常，以便上层处理

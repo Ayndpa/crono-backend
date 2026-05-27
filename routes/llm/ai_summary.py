@@ -1,3 +1,6 @@
+import base64
+import json
+
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -41,6 +44,7 @@ class TranslationCacheRequest(BaseModel):
 # sessions key: article_id（int）或 url hash（str）
 sessions: Dict[Any, Dict[str, Any]] = defaultdict(lambda: {
     "buffer": [],
+    "content_buffer": [],
     "subscribers": set(),
     "producer_task": None,
     "lock": asyncio.Lock(),
@@ -48,6 +52,7 @@ sessions: Dict[Any, Dict[str, Any]] = defaultdict(lambda: {
 
 podcast_sessions: Dict[Any, Dict[str, Any]] = defaultdict(lambda: {
     "buffer": [],
+    "content_buffer": [],
     "subscribers": set(),
     "producer_task": None,
     "lock": asyncio.Lock(),
@@ -55,6 +60,7 @@ podcast_sessions: Dict[Any, Dict[str, Any]] = defaultdict(lambda: {
 
 translation_sessions: Dict[Any, Dict[str, Any]] = defaultdict(lambda: {
     "buffer": [],
+    "content_buffer": [],
     "subscribers": set(),
     "producer_task": None,
     "lock": asyncio.Lock(),
@@ -81,6 +87,12 @@ def _article_prompt_text(article: dict) -> str:
     if title.strip():
         return f"标题：{title}\n\n正文：\n{html}"
     return html
+
+
+def _encode_stream_event(event: dict[str, str]) -> bytes:
+    payload = json.dumps(event, ensure_ascii=False).encode("utf-8")
+    encoded = base64.b64encode(payload).decode("utf-8")
+    return f"data: {encoded}\n\n".encode("utf-8")
 
 
 SUMMARY_SYSTEM_PROMPT = (
@@ -137,6 +149,8 @@ async def _make_stream_session(
             try:
                 async for chunk in client.stream_chat_completion(messages):
                     session["buffer"].append(chunk)
+                    if chunk.get("type") == "content":
+                        session["content_buffer"].append(chunk["text"])
                     to_remove = []
                     for q in session["subscribers"]:
                         try:
@@ -149,7 +163,7 @@ async def _make_stream_session(
                         session["subscribers"].discard(q)
 
                 if persist_article_id is not None:
-                    full_text = "".join(session["buffer"])
+                    full_text = "".join(session["content_buffer"])
                     if persist_kind == "translation":
                         save_ai_translation(db, persist_article_id, full_text)
                     else:
@@ -184,12 +198,12 @@ def _make_event_generator(session: dict):
     async def event_generator():
         try:
             for chunk in session["buffer"]:
-                yield chunk
+                yield _encode_stream_event(chunk)
             while True:
                 item = await q.get()
                 if item is None:
                     break
-                yield item
+                yield _encode_stream_event(item)
         except asyncio.CancelledError:
             session["subscribers"].discard(q)
             raise
@@ -212,7 +226,7 @@ async def ai_summary_stream(
     if payload.article_id is not None:
         existing = get_ai_summary(db, payload.article_id)
         if existing:
-            return StreamingResponse(iter([existing]), media_type="text/plain")
+            return StreamingResponse(iter([_encode_stream_event({"type": "content", "text": existing})]), media_type="text/event-stream")
 
     session = sessions[key]
 
@@ -234,7 +248,7 @@ async def ai_summary_stream(
 
     q, event_generator = _make_event_generator(session)
     session["subscribers"].add(q)
-    return StreamingResponse(event_generator(), media_type="text/plain")
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/ai_summary/cache")
@@ -263,7 +277,7 @@ async def translation_stream(
     if payload.article_id is not None:
         existing = get_ai_translation(db, payload.article_id)
         if existing:
-            return StreamingResponse(iter([existing]), media_type="text/plain")
+            return StreamingResponse(iter([_encode_stream_event({"type": "content", "text": existing})]), media_type="text/event-stream")
 
     session = translation_sessions[key]
 
@@ -286,7 +300,7 @@ async def translation_stream(
 
     q, event_generator = _make_event_generator(session)
     session["subscribers"].add(q)
-    return StreamingResponse(event_generator(), media_type="text/plain")
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/translation/cache")
@@ -409,9 +423,9 @@ async def selection_assist_stream(
 
     async def generate():
         async for chunk in client.stream_chat_completion(messages):
-            yield chunk
+            yield _encode_stream_event(chunk)
 
-    return StreamingResponse(generate(), media_type="text/plain")
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 class PodcastRequest(BaseModel):
@@ -463,4 +477,4 @@ async def podcast_stream(
 
     q, event_generator = _make_event_generator(session)
     session["subscribers"].add(q)
-    return StreamingResponse(event_generator(), media_type="text/plain")
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

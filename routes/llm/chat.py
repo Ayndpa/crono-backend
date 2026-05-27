@@ -1,5 +1,6 @@
 import os
 import base64
+import json
 from typing import AsyncGenerator
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse
@@ -9,6 +10,12 @@ from services.llm.chat import OpenAIStreamClient
 from services.llm.config import get_llm_config_service
 from services.database import get_db
 from services.auth import get_current_user
+
+
+def _encode_stream_event(event: dict[str, str]) -> bytes:
+  payload = json.dumps(event, ensure_ascii=False).encode("utf-8")
+  encoded = base64.b64encode(payload).decode("utf-8")
+  return f"data: {encoded}\n\n".encode("utf-8")
 
 # FastAPI 路由设置
 router = APIRouter(
@@ -26,14 +33,7 @@ async def generate_stream(client: OpenAIStreamClient, request: ChatRequest) -> A
       request.messages,
       request.model
     ):
-      # 将 chunk 编码为 bytes
-      chunk_bytes = chunk.encode("utf-8")
-      # 使用 Base64 编码来处理 chunk 中的所有特殊字符
-      encoded_chunk = base64.b64encode(chunk_bytes).decode("utf-8")
-      # 将编码后的 chunk 封装成 SSE 格式
-      sse_chunk = f"data: {encoded_chunk}\n\n"
-      # 编码为 bytes 并返回
-      yield sse_chunk.encode("utf-8")
+      yield _encode_stream_event(chunk)
 
   except HTTPException:
     raise

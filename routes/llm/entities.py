@@ -1,5 +1,6 @@
 import json
 import hashlib
+import base64
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
@@ -53,6 +54,12 @@ ENTITY_EXPLAIN_SYSTEM_PROMPT = """\
 4. 用中文回答，简洁有力，控制在 150 字以内
 5. 直接输出解释内容，不要有任何前言
 """
+
+
+def _encode_stream_event(event: dict[str, str]) -> bytes:
+    payload = json.dumps(event, ensure_ascii=False).encode("utf-8")
+    encoded = base64.b64encode(payload).decode("utf-8")
+    return f"data: {encoded}\n\n".encode("utf-8")
 
 
 @router.post("/entities")
@@ -130,8 +137,6 @@ async def entity_explain_stream(
 
     async def generate():
         async for chunk in client.stream_chat_completion(messages):
-            chunk_bytes = chunk.encode("utf-8")
-            encoded = base64.b64encode(chunk_bytes).decode("utf-8")
-            yield f"data: {encoded}\n\n".encode("utf-8")
+            yield _encode_stream_event(chunk)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
