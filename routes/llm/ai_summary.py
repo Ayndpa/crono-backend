@@ -356,6 +356,7 @@ SELECTION_ASSIST_SYSTEM_PROMPTS = {
 # qa sessions 不缓存（每次问题不同）
 qa_sessions: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
     "buffer": [],
+    "content_buffer": [],
     "subscribers": set(),
     "producer_task": None,
     "lock": asyncio.Lock(),
