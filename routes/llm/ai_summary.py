@@ -164,13 +164,17 @@ async def _make_stream_session(
 
                 if persist_article_id is not None:
                     full_text = "".join(session["content_buffer"])
-                    if persist_kind == "translation":
-                        save_ai_translation(db, persist_article_id, full_text)
-                    else:
-                        save_ai_summary(db, persist_article_id, full_text)
+                    try:
+                        if persist_kind == "translation":
+                            save_ai_translation(db, persist_article_id, full_text)
+                        else:
+                            save_ai_summary(db, persist_article_id, full_text)
+                    except HTTPException as e:
+                        if e.status_code != 404:
+                            raise
 
             except Exception as e:
-                error_text = f"\n生成失败：{e}"
+                error_text = "\n生成失败，请稍后重试。"
                 session["buffer"].append(error_text)
                 for q in list(session["subscribers"]):
                     try:
