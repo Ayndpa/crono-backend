@@ -76,7 +76,7 @@ async def shutdown_playwright(pw, browser) -> None:
             await pw.stop()
 
 
-async def scrape_article(browser, url: str, timeout: int = 60000) -> dict:
+async def scrape_article(browser, url: str, timeout: int = 60000, bypass_cache: bool = False) -> dict:
     """
     抓取文章页面 HTML，带缓存、验证码检测和 readability 提取。
 
@@ -90,8 +90,8 @@ async def scrape_article(browser, url: str, timeout: int = 60000) -> dict:
     """
     cache_path = _url_to_cache_path(url)
 
-    # 命中缓存直接返回
-    if cache_path.exists():
+    # 命中缓存直接返回（仅在未 bypass_cache 时）
+    if not bypass_cache and cache_path.exists():
         html = cache_path.read_text(encoding="utf-8")
         extracted = _extract_readable_content(html)
         return {

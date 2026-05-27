@@ -11,6 +11,7 @@ router = APIRouter(prefix="/rss/article")
 
 class ArticleContentRequest(BaseModel):
     url: str
+    bypass_cache: bool = False
 
 
 @router.post("/content")
@@ -26,7 +27,7 @@ async def get_article_content(
     """
     browser = request.app.state.browser
     try:
-        result = await pw_service.scrape_article(browser, body.url)
+        result = await pw_service.scrape_article(browser, body.url, bypass_cache=body.bypass_cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"抓取失败: {e}")
 

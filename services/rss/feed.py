@@ -12,11 +12,30 @@ def get_all_feeds(db: sqlite3.Connection, user_id: Optional[int] = None) -> List
         cursor = db.cursor()
         if user_id is not None:
             cursor.execute(
-                "SELECT id, name, url, is_active FROM rss_feeds WHERE user_id = ?",
+                """
+                SELECT 
+                    f.id, f.name, f.url, f.is_active,
+                    COALESCE(SUM(CASE WHEN s.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count
+                FROM rss_feeds f
+                LEFT JOIN articles a ON f.id = a.feed_id
+                LEFT JOIN article_states s ON a.id = s.article_id
+                WHERE f.user_id = ?
+                GROUP BY f.id
+                """,
                 (user_id,),
             )
         else:
-            cursor.execute("SELECT id, name, url, is_active FROM rss_feeds")
+            cursor.execute(
+                """
+                SELECT 
+                    f.id, f.name, f.url, f.is_active,
+                    COALESCE(SUM(CASE WHEN s.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count
+                FROM rss_feeds f
+                LEFT JOIN articles a ON f.id = a.feed_id
+                LEFT JOIN article_states s ON a.id = s.article_id
+                GROUP BY f.id
+                """
+            )
         return [Feed(**feed) for feed in cursor.fetchall()]
     except sqlite3.Error as e:
         raise HTTPException(status_code=500, detail=f"获取所有 Feed 失败: {e}")
@@ -26,7 +45,16 @@ def get_feed_by_id(db: sqlite3.Connection, feed_id: int, user_id: int) -> Option
     try:
         cursor = db.cursor()
         cursor.execute(
-            "SELECT id, name, url, is_active FROM rss_feeds WHERE id = ? AND user_id = ?",
+            """
+            SELECT 
+                f.id, f.name, f.url, f.is_active,
+                COALESCE(SUM(CASE WHEN s.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count
+            FROM rss_feeds f
+            LEFT JOIN articles a ON f.id = a.feed_id
+            LEFT JOIN article_states s ON a.id = s.article_id
+            WHERE f.id = ? AND f.user_id = ?
+            GROUP BY f.id
+            """,
             (feed_id, user_id),
         )
         feed = cursor.fetchone()

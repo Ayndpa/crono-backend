@@ -5,3 +5,4 @@ class Feed(BaseModel):
     name: str
     url: HttpUrl
     is_active: bool = True
+    unread_count: int | None = None
