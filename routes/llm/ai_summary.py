@@ -129,7 +129,7 @@ TRANSLATION_SYSTEM_PROMPT = (
 async def _make_stream_session(
     sessions_dict: Dict,
     key: Any,
-    messages: list,
+    build_messages,
     db,
     user_id: int,
     persist_article_id: Optional[int] = None,
@@ -137,12 +137,17 @@ async def _make_stream_session(
 ):
     """
     通用流式 producer 启动逻辑。
+    build_messages 放在文章级锁内执行，避免同一文章并发请求重复抓取正文。
     persist_article_id 不为 None 时，生成完毕后写入 DB。
     """
     session = sessions_dict[key]
     async with session["lock"]:
         if session["producer_task"] and not session["producer_task"].done():
             return
+
+        session["buffer"].clear()
+        session["content_buffer"].clear()
+        messages = await build_messages()
 
         async def producer():
             client = OpenAIStreamClient(user_id)
@@ -174,11 +179,11 @@ async def _make_stream_session(
                             raise
 
             except Exception as e:
-                error_text = "\n生成失败，请稍后重试。"
-                session["buffer"].append(error_text)
+                error_chunk = {"type": "content", "text": "\n生成失败，请稍后重试。"}
+                session["buffer"].append(error_chunk)
                 for q in list(session["subscribers"]):
                     try:
-                        q.put_nowait(error_text)
+                        q.put_nowait(error_chunk)
                         q.put_nowait(None)
                     except Exception:
                         pass
@@ -214,7 +219,7 @@ def _make_event_generator(session: dict):
         finally:
             session["subscribers"].discard(q)
 
-    return q, event_generator
+    return event_generator
 
 
 @router.post("/ai_summary/stream")
@@ -234,24 +239,26 @@ async def ai_summary_stream(
 
     session = sessions[key]
 
-    if not session["producer_task"]:
+    if not session["producer_task"] or session["producer_task"].done():
         browser = getattr(request.app.state, "browser", None)
         if not browser:
             raise HTTPException(status_code=503, detail="Browser not available")
-        article_content = _article_prompt_text(
-            await pw_service.scrape_article(browser, payload.url)
-        )
-        messages = [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": article_content},
-        ]
+
+        async def build_messages():
+            article_content = _article_prompt_text(
+                await pw_service.scrape_article(browser, payload.url)
+            )
+            return [
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": article_content},
+            ]
+
         await _make_stream_session(
-            sessions, key, messages, db, current_user["id"],
+            sessions, key, build_messages, db, current_user["id"],
             persist_article_id=payload.article_id,
         )
 
-    q, event_generator = _make_event_generator(session)
-    session["subscribers"].add(q)
+    event_generator = _make_event_generator(session)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
@@ -285,25 +292,27 @@ async def translation_stream(
 
     session = translation_sessions[key]
 
-    if not session["producer_task"]:
+    if not session["producer_task"] or session["producer_task"].done():
         browser = getattr(request.app.state, "browser", None)
         if not browser:
             raise HTTPException(status_code=503, detail="Browser not available")
-        article_content = _article_prompt_text(
-            await pw_service.scrape_article(browser, payload.url)
-        )
-        messages = [
-            {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
-            {"role": "user", "content": article_content},
-        ]
+
+        async def build_messages():
+            article_content = _article_prompt_text(
+                await pw_service.scrape_article(browser, payload.url)
+            )
+            return [
+                {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
+                {"role": "user", "content": article_content},
+            ]
+
         await _make_stream_session(
-            translation_sessions, key, messages, db, current_user["id"],
+            translation_sessions, key, build_messages, db, current_user["id"],
             persist_article_id=payload.article_id,
             persist_kind="translation",
         )
 
-    q, event_generator = _make_event_generator(session)
-    session["subscribers"].add(q)
+    event_generator = _make_event_generator(session)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
@@ -385,17 +394,18 @@ async def article_qa_stream(
     article_content = _article_prompt_text(
         await pw_service.scrape_article(browser, payload.url)
     )
-    messages = [
-        {"role": "system", "content": ARTICLE_QA_SYSTEM_PROMPT},
-        {"role": "user", "content": f"以下是文章内容：\n\n{article_content}\n\n请回答：{payload.question}"},
-    ]
+    async def build_messages():
+        return [
+            {"role": "system", "content": ARTICLE_QA_SYSTEM_PROMPT},
+            {"role": "user", "content": f"以下是文章内容：\n\n{article_content}\n\n请回答：{payload.question}"},
+        ]
+
     await _make_stream_session(
-        qa_sessions, key, messages, db, current_user["id"],
+        qa_sessions, key, build_messages, db, current_user["id"],
         persist_article_id=None,
     )
 
-    q, event_generator = _make_event_generator(session)
-    session["subscribers"].add(q)
+    event_generator = _make_event_generator(session)
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 
@@ -464,22 +474,24 @@ async def podcast_stream(
     key = "podcast_" + str(_session_key(payload.article_id, payload.url)) + "_" + style_hash
     session = podcast_sessions[key]
 
-    if not session["producer_task"]:
+    if not session["producer_task"] or session["producer_task"].done():
         browser = getattr(request.app.state, "browser", None)
         if not browser:
             raise HTTPException(status_code=503, detail="Browser not available")
-        article_content = _article_prompt_text(
-            await pw_service.scrape_article(browser, payload.url)
-        )
-        messages = [
-            {"role": "system", "content": _podcast_system_prompt(payload.style)},
-            {"role": "user", "content": article_content},
-        ]
+
+        async def build_messages():
+            article_content = _article_prompt_text(
+                await pw_service.scrape_article(browser, payload.url)
+            )
+            return [
+                {"role": "system", "content": _podcast_system_prompt(payload.style)},
+                {"role": "user", "content": article_content},
+            ]
+
         await _make_stream_session(
-            podcast_sessions, key, messages, db, current_user["id"],
+            podcast_sessions, key, build_messages, db, current_user["id"],
             persist_article_id=None,
         )
 
-    q, event_generator = _make_event_generator(session)
-    session["subscribers"].add(q)
+    event_generator = _make_event_generator(session)
     return StreamingResponse(event_generator(), media_type="text/event-stream")
