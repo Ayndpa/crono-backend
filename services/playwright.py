@@ -3,6 +3,7 @@
 import hashlib
 import os
 from pathlib import Path
+from urllib.parse import urljoin
 
 from playwright.async_api import async_playwright
 from readability import Document
@@ -58,27 +59,27 @@ def _extract_with_trafilatura(html: str, url: str) -> dict:
     metadata = trafilatura.extract_metadata(html, default_url=url)
     return {
         "title": (getattr(metadata, "title", "") or "").strip(),
-        "content": _normalize_extracted_html(content),
+        "content": _normalize_extracted_html(content, url),
     }
 
 
-def _extract_with_readability(html: str) -> dict:
+def _extract_with_readability(html: str, url: str) -> dict:
     """使用 readability-lxml 兜底提取正文内容。"""
     try:
         doc = Document(html)
         return {
             "title": doc.title(),
-            "content": doc.summary(),  # 干净的正文 HTML
+            "content": _normalize_extracted_html(doc.summary(), url),
         }
     except Exception as e:
         # 提取失败时返回原始 HTML
         return {
             "title": "",
-            "content": html,
+            "content": _normalize_extracted_html(html, url),
         }
 
 
-def _normalize_extracted_html(content: str) -> str:
+def _normalize_extracted_html(content: str, base_url: str) -> str:
     """Normalize extractor-specific HTML into browser-renderable markup."""
     root = lxml_html.fragment_fromstring(content, create_parent="div")
     for graphic in list(root.iter("graphic")):
@@ -89,10 +90,32 @@ def _normalize_extracted_html(content: str) -> str:
                 image.set(attr, value)
         graphic.getparent().replace(graphic, image)
 
+    for element in root.iter():
+        for attr in ("src", "href", "poster"):
+            value = element.get(attr)
+            if value:
+                element.set(attr, urljoin(base_url, value))
+
+        srcset = element.get("srcset")
+        if srcset:
+            element.set("srcset", _absolutize_srcset(srcset, base_url))
+
     return "".join(
         etree.tostring(child, encoding="unicode", method="html")
         for child in root
     )
+
+
+def _absolutize_srcset(srcset: str, base_url: str) -> str:
+    """Convert every URL inside an HTML srcset value to an absolute URL."""
+    candidates = []
+    for candidate in srcset.split(","):
+        parts = candidate.strip().split()
+        if not parts:
+            continue
+        parts[0] = urljoin(base_url, parts[0])
+        candidates.append(" ".join(parts))
+    return ", ".join(candidates)
 
 
 def _extract_article_content(html: str, url: str) -> dict:
@@ -104,7 +127,7 @@ def _extract_article_content(html: str, url: str) -> dict:
     except Exception:
         pass
 
-    return _extract_with_readability(html)
+    return _extract_with_readability(html, url)
 
 
 async def startup_playwright():
