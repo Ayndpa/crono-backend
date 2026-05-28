@@ -25,7 +25,10 @@ async def get_article_content(
     - 优先返回缓存
     - 触发验证码时返回 captcha=True，前端降级为 iframe
     """
-    browser = request.app.state.browser
+    browser = getattr(request.app.state, "browser", None)
+    if not browser:
+        raise HTTPException(status_code=503, detail="Browser not available")
+
     try:
         result = await pw_service.scrape_article(browser, body.url, bypass_cache=body.bypass_cache)
     except Exception as e:

@@ -16,5 +16,6 @@ dependencies = [
     "readability-lxml>=0.8.4.1",
     "requests>=2.33.1",
     "schedule==1.2.2",
+    "trafilatura>=2.0.0",
     "uvicorn==0.35.0",
 ]

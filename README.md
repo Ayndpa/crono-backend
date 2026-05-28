@@ -71,7 +71,7 @@ crono-backend/
 ├── services/           # 业务逻辑层
 │   ├── auth.py         # JWT 签发/验证、密码哈希、认证依赖
 │   ├── database.py     # SQLite 连接管理与数据库初始化
-│   ├── playwright.py   # 动态网页正文抓取
+│   ├── playwright.py   # Playwright 动态抓取 + 正文提取
 │   ├── config.py       # 配置读写服务
 │   ├── rss/            # RSS 更新调度、文章入库、状态管理
 │   └── llm/            # LLM 调用与流式摘要服务
