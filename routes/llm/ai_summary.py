@@ -26,6 +26,7 @@ router = APIRouter(prefix="/llm")
 class AISummaryRequest(BaseModel):
     url: str
     article_id: Optional[int] = None  # RSS 文章有 id；浏览器模式可不传
+    force: bool = False
 
 
 class AISummaryCacheRequest(BaseModel):
@@ -35,6 +36,7 @@ class AISummaryCacheRequest(BaseModel):
 class TranslationRequest(BaseModel):
     url: str
     article_id: Optional[int] = None
+    force: bool = False
 
 
 class TranslationCacheRequest(BaseModel):
@@ -231,8 +233,8 @@ async def ai_summary_stream(
 ):
     key = _session_key(payload.article_id, payload.url)
 
-    # 有 article_id 时才查 DB 缓存
-    if payload.article_id is not None:
+    # 有 article_id 时才查 DB 缓存；force=true 时跳过缓存并重新生成
+    if payload.article_id is not None and not payload.force:
         existing = get_ai_summary(db, payload.article_id)
         if existing:
             return StreamingResponse(iter([_encode_stream_event({"type": "content", "text": existing})]), media_type="text/event-stream")
@@ -285,7 +287,7 @@ async def translation_stream(
     """上下文感知翻译，结果持久化到 DB。"""
     key = _session_key(payload.article_id, payload.url)
 
-    if payload.article_id is not None:
+    if payload.article_id is not None and not payload.force:
         existing = get_ai_translation(db, payload.article_id)
         if existing:
             return StreamingResponse(iter([_encode_stream_event({"type": "content", "text": existing})]), media_type="text/event-stream")
